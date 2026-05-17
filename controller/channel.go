@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1055,15 +1056,30 @@ func FetchModels(c *gin.Context) {
 		})
 		return
 	}
-	//check status code
-	if response.StatusCode != http.StatusOK {
+	defer response.Body.Close()
+	body, readErr := io.ReadAll(response.Body)
+	if readErr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"message": "Failed to fetch models",
+			"message": readErr.Error(),
 		})
 		return
 	}
-	defer response.Body.Close()
+	//check status code
+	if response.StatusCode != http.StatusOK {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("获取模型失败，上游 %s 返回 HTTP %d：%s", url, response.StatusCode, summarizeUpstreamBody(body)),
+		})
+		return
+	}
+	if err := ensureJSONResponse(url, response.Header.Get("Content-Type"), body); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
 
 	var result struct {
 		Data []struct {
@@ -1071,10 +1087,10 @@ func FetchModels(c *gin.Context) {
 		} `json:"data"`
 	}
 
-	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+	if err := common.Unmarshal(body, &result); err != nil {
+		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": err.Error(),
+			"message": fmt.Sprintf("解析模型列表失败，上游 %s 返回的不是 OpenAI 兼容模型列表：%s", url, err.Error()),
 		})
 		return
 	}
