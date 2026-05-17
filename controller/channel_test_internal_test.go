@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -68,4 +69,20 @@ func TestBuildTestLogOtherInjectsTieredInfo(t *testing.T) {
 	require.Equal(t, "tiered_expr", other["billing_mode"])
 	require.Equal(t, "base", other["matched_tier"])
 	require.NotEmpty(t, other["expr_b64"])
+}
+
+func TestBuildOpenAICompatibleModelURLs(t *testing.T) {
+	require.Equal(t, []string{
+		"https://example.com/v1/models",
+		"https://example.com/models",
+	}, buildOpenAICompatibleModelURLs(constant.ChannelTypeOpenAI, "https://example.com"))
+
+	require.Equal(t, []string{
+		"https://example.com/v1/models",
+		"https://example.com/models",
+	}, buildOpenAICompatibleModelURLs(constant.ChannelTypeOpenAI, "https://example.com/v1"))
+
+	require.Equal(t, []string{
+		"https://example.com/api/models",
+	}, buildOpenAICompatibleModelURLs(constant.ChannelTypeOpenAI, "https://example.com/api/models"))
 }
