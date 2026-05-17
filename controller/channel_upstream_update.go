@@ -289,35 +289,6 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 		return normalizeModelNames(models), nil
 	}
 
-	{
-		key, _, apiErr := channel.GetNextEnabledKey()
-		if apiErr != nil {
-			return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
-		}
-		key = strings.TrimSpace(key)
-
-		headers, err := buildFetchModelsHeaders(channel, key)
-		if err != nil {
-			return nil, err
-		}
-
-		client, err := service.NewProxyHttpClient(channel.GetSetting().Proxy)
-		if err != nil {
-			return nil, err
-		}
-
-		ids, _, err := fetchOpenAICompatibleModelIDs(
-			client,
-			buildOpenAICompatibleModelURLs(channel.Type, baseURL),
-			headers,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		return normalizeModelNames(ids), nil
-	}
-
 	var url string
 	switch channel.Type {
 	case constant.ChannelTypeAli:

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -199,133 +198,6 @@ func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, e
 	}
 
 	return headers, nil
-}
-
-func buildOpenAICompatibleModelURLs(channelType int, baseURL string) []string {
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if baseURL == "" {
-		return nil
-	}
-
-	urls := make([]string, 0, 3)
-	addURL := func(url string) {
-		url = strings.TrimSpace(url)
-		if url == "" {
-			return
-		}
-		for _, existing := range urls {
-			if existing == url {
-				return
-			}
-		}
-		urls = append(urls, url)
-	}
-	addOpenAICompatibleURLs := func(root string) {
-		root = strings.TrimRight(strings.TrimSpace(root), "/")
-		if root == "" {
-			return
-		}
-		if strings.HasSuffix(root, "/models") {
-			addURL(root)
-			return
-		}
-		if strings.HasSuffix(root, "/v1") {
-			addURL(root + "/models")
-			parent := strings.TrimSuffix(root, "/v1")
-			addURL(parent + "/models")
-			return
-		}
-		addURL(root + "/v1/models")
-		addURL(root + "/models")
-	}
-
-	switch channelType {
-	case constant.ChannelTypeAli:
-		addURL(baseURL + "/compatible-mode/v1/models")
-	case constant.ChannelTypeZhipu_v4:
-		if plan, ok := constant.ChannelSpecialBases[baseURL]; ok && plan.OpenAIBaseURL != "" {
-			addOpenAICompatibleURLs(plan.OpenAIBaseURL)
-		} else {
-			addURL(baseURL + "/api/paas/v4/models")
-		}
-	case constant.ChannelTypeVolcEngine:
-		if plan, ok := constant.ChannelSpecialBases[baseURL]; ok && plan.OpenAIBaseURL != "" {
-			addOpenAICompatibleURLs(plan.OpenAIBaseURL)
-		} else {
-			addOpenAICompatibleURLs(baseURL)
-		}
-	case constant.ChannelTypeMoonshot:
-		if plan, ok := constant.ChannelSpecialBases[baseURL]; ok && plan.OpenAIBaseURL != "" {
-			addOpenAICompatibleURLs(plan.OpenAIBaseURL)
-		} else {
-			addOpenAICompatibleURLs(baseURL)
-		}
-	default:
-		addOpenAICompatibleURLs(baseURL)
-	}
-
-	return urls
-}
-
-func fetchOpenAICompatibleModelIDs(client *http.Client, urls []string, headers http.Header) ([]string, string, error) {
-	if client == nil {
-		client = http.DefaultClient
-	}
-	if len(urls) == 0 {
-		return nil, "", fmt.Errorf("empty Base URL")
-	}
-
-	errs := make([]string, 0, len(urls))
-	for _, modelURL := range urls {
-		request, err := http.NewRequest(http.MethodGet, modelURL, nil)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %s", modelURL, err.Error()))
-			continue
-		}
-		for key, values := range headers {
-			for _, value := range values {
-				request.Header.Add(key, value)
-			}
-		}
-
-		response, err := client.Do(request)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %s", modelURL, err.Error()))
-			continue
-		}
-		body, readErr := io.ReadAll(response.Body)
-		closeErr := response.Body.Close()
-		if readErr != nil {
-			errs = append(errs, fmt.Sprintf("%s: %s", modelURL, readErr.Error()))
-			continue
-		}
-		if closeErr != nil {
-			errs = append(errs, fmt.Sprintf("%s: %s", modelURL, closeErr.Error()))
-			continue
-		}
-		if response.StatusCode != http.StatusOK {
-			errs = append(errs, fmt.Sprintf("%s returned HTTP %d: %s", modelURL, response.StatusCode, summarizeUpstreamBody(body)))
-			continue
-		}
-		if err := ensureJSONResponse(modelURL, response.Header.Get("Content-Type"), body); err != nil {
-			errs = append(errs, err.Error())
-			continue
-		}
-
-		var result OpenAIModelsResponse
-		if err := common.Unmarshal(body, &result); err != nil {
-			errs = append(errs, fmt.Sprintf("%s returned an invalid OpenAI-compatible model list: %s", modelURL, err.Error()))
-			continue
-		}
-
-		models := make([]string, 0, len(result.Data))
-		for _, item := range result.Data {
-			models = append(models, item.ID)
-		}
-		return normalizeModelNames(models), modelURL, nil
-	}
-
-	return nil, "", fmt.Errorf("all model endpoints failed: %s", strings.Join(errs, " | "))
 }
 
 func FetchUpstreamModels(c *gin.Context) {
@@ -1161,27 +1033,6 @@ func FetchModels(c *gin.Context) {
 		return
 	}
 
-	{
-		models, _, err := fetchOpenAICompatibleModelIDs(
-			http.DefaultClient,
-			buildOpenAICompatibleModelURLs(req.Type, baseURL),
-			GetAuthHeader(key),
-		)
-		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": fmt.Sprintf("获取模型列表失败: %s", err.Error()),
-			})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"data":    models,
-		})
-		return
-	}
-
 	client := &http.Client{}
 	url := fmt.Sprintf("%s/v1/models", baseURL)
 
@@ -1204,30 +1055,15 @@ func FetchModels(c *gin.Context) {
 		})
 		return
 	}
-	defer response.Body.Close()
-	body, readErr := io.ReadAll(response.Body)
-	if readErr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": readErr.Error(),
-		})
-		return
-	}
 	//check status code
 	if response.StatusCode != http.StatusOK {
-		c.JSON(http.StatusOK, gin.H{
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"message": fmt.Sprintf("获取模型失败，上游 %s 返回 HTTP %d：%s", url, response.StatusCode, summarizeUpstreamBody(body)),
+			"message": "Failed to fetch models",
 		})
 		return
 	}
-	if err := ensureJSONResponse(url, response.Header.Get("Content-Type"), body); err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
-		return
-	}
+	defer response.Body.Close()
 
 	var result struct {
 		Data []struct {
@@ -1235,10 +1071,10 @@ func FetchModels(c *gin.Context) {
 		} `json:"data"`
 	}
 
-	if err := common.Unmarshal(body, &result); err != nil {
-		c.JSON(http.StatusOK, gin.H{
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"message": fmt.Sprintf("解析模型列表失败，上游 %s 返回的不是 OpenAI 兼容模型列表：%s", url, err.Error()),
+			"message": err.Error(),
 		})
 		return
 	}

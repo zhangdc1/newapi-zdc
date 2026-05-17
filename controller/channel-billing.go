@@ -1,14 +1,12 @@
 package controller
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -154,6 +152,9 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	if err != nil {
 		return nil, err
 	}
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status code: %d", res.StatusCode)
+	}
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
@@ -162,41 +163,7 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	if err != nil {
 		return nil, err
 	}
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("upstream %s returned status %d: %s", url, res.StatusCode, summarizeUpstreamBody(body))
-	}
-	if err := ensureJSONResponse(url, res.Header.Get("Content-Type"), body); err != nil {
-		return nil, err
-	}
 	return body, nil
-}
-
-func ensureJSONResponse(url, contentType string, body []byte) error {
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) == 0 {
-		return fmt.Errorf("upstream %s returned empty response", url)
-	}
-	if trimmed[0] == '{' || trimmed[0] == '[' {
-		return nil
-	}
-	return fmt.Errorf(
-		"upstream %s did not return JSON, content-type=%q, body starts with: %s; please check Base URL, API key, proxy, or whether the provider supports /v1/models",
-		url,
-		contentType,
-		summarizeUpstreamBody(trimmed),
-	)
-}
-
-func summarizeUpstreamBody(body []byte) string {
-	const maxLen = 200
-	summary := strings.Join(strings.Fields(string(bytes.TrimSpace(body))), " ")
-	if summary == "" {
-		return "<empty>"
-	}
-	if len(summary) > maxLen {
-		summary = summary[:maxLen] + "..."
-	}
-	return summary
 }
 
 func updateChannelCloseAIBalance(channel *model.Channel) (float64, error) {

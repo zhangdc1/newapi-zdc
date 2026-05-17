@@ -444,13 +444,6 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 				newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError),
 			}
 		}
-		if err := validateChannelTestUpstreamResponse(httpResp, isStream); err != nil {
-			return testResult{
-				context:     c,
-				localErr:    err,
-				newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
-			}
-		}
 	}
 	usageA, respErr := adaptor.DoResponse(c, httpResp, info)
 	if respErr != nil {
@@ -619,59 +612,6 @@ func detectErrorFromTestResponseBody(respBody []byte) error {
 	}
 
 	return nil
-}
-
-func validateChannelTestUpstreamResponse(resp *http.Response, isStream bool) error {
-	if resp == nil || resp.Body == nil {
-		return nil
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	_ = resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewBuffer(body))
-
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) == 0 {
-		return errors.New("upstream returned empty response")
-	}
-
-	contentType := resp.Header.Get("Content-Type")
-	upstreamURL := ""
-	if resp.Request != nil && resp.Request.URL != nil {
-		upstreamURL = resp.Request.URL.String()
-	}
-	if upstreamURL == "" {
-		upstreamURL = "upstream"
-	}
-
-	if bytes.HasPrefix(trimmed, []byte("<")) || strings.Contains(strings.ToLower(contentType), "text/html") {
-		return fmt.Errorf(
-			"%s did not return JSON/stream data, content-type=%q, body starts with: %s; please check Base URL, API key, proxy, or whether the provider endpoint is OpenAI-compatible",
-			upstreamURL,
-			contentType,
-			summarizeUpstreamBody(trimmed),
-		)
-	}
-
-	if isStream {
-		if bytes.HasPrefix(trimmed, []byte("data:")) {
-			return nil
-		}
-	}
-
-	if trimmed[0] == '{' || trimmed[0] == '[' {
-		return nil
-	}
-
-	return fmt.Errorf(
-		"%s returned unexpected response, content-type=%q, body starts with: %s",
-		upstreamURL,
-		contentType,
-		summarizeUpstreamBody(trimmed),
-	)
 }
 
 func validateStreamTestResponseBody(respBody []byte) error {
